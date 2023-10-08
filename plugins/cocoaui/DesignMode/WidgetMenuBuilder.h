@@ -1,0 +1,23 @@
+//
+//  WidgetMenuBuilder.h
+//  DeaDBeeF
+//
+//  Created by Oleksiy Yakovenko on 21/02/2021.
+//  Copyright © 2021 Oleksiy Yakovenko. All rights reserved.
+//
+
+#import <Foundation/Foundation.h>
+#import "DesignModeDefs.h"
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface WidgetMenuBuilder : NSObject<WidgetMenuBuilderProtocol>
+
+@property (nonatomic,class,readonly) WidgetMenuBuilder *sharedInstance;
+
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithDeps:(id<DesignModeDepsProtocol>)deps NS_DESIGNATED_INITIALIZER;
+
+@end
+
+NS_ASSUME_NONNULL_END
