@@ -135,7 +135,7 @@ ml_is_tree_item_selected (ddb_mediasource_source_t *_source, const ddb_medialib_
     const char *path = item->path;
     __block ml_collection_item_state_t state;
     dispatch_sync(source->sync_queue, ^{
-        state = ml_item_state_get (&source->db.state, path);
+        state = ml_item_state_get (&source->state, path);
     });
     return state.selected;
 }
@@ -147,12 +147,12 @@ ml_set_tree_item_selected (ddb_mediasource_source_t *_source, const ddb_medialib
     const char *path = item->path;
     dispatch_sync(source->sync_queue, ^{
         ml_collection_item_state_t *prev = NULL;
-        ml_collection_item_state_t *state = ml_item_state_find (&source->db.state, path, &prev);
+        ml_collection_item_state_t *state = ml_item_state_find (&source->state, path, &prev);
         int expanded = 0;
         if (state != NULL) {
             expanded = state->expanded;
         }
-        ml_item_state_update (&source->db.state, path, state, prev, selected, expanded);
+        ml_item_state_update (&source->state, path, state, prev, selected, expanded);
     });
 }
 
@@ -163,7 +163,7 @@ ml_is_tree_item_expanded (ddb_mediasource_source_t *_source, const ddb_medialib_
     const char *path = item->path;
     __block ml_collection_item_state_t state;
     dispatch_sync(source->sync_queue, ^{
-        state = ml_item_state_get (&source->db.state, path);
+        state = ml_item_state_get (&source->state, path);
     });
     return state.expanded;
 }
@@ -178,12 +178,12 @@ ml_set_tree_item_expanded (ddb_mediasource_source_t *_source, const ddb_medialib
     }
     dispatch_sync(source->sync_queue, ^{
         ml_collection_item_state_t *prev = NULL;
-        ml_collection_item_state_t *state = ml_item_state_find (&source->db.state, path, &prev);
+        ml_collection_item_state_t *state = ml_item_state_find (&source->state, path, &prev);
         int selected = 0;
         if (state != NULL) {
             selected = state->selected;
         }
-        ml_item_state_update (&source->db.state, path, state, prev, selected, expanded);
+        ml_item_state_update (&source->state, path, state, prev, selected, expanded);
     });
 }
 
@@ -361,7 +361,7 @@ ml_insert_folder_at_index (ddb_mediasource_source_t *_source, const char *folder
         }
         json_decref(value);
         _save_folders_config(source);
-        ml_watch_fs_start(source);
+        ml_source_update_fs_watch(source);
     });
     if (notify) {
         ml_notify_listeners (source, DDB_MEDIALIB_MEDIASOURCE_EVENT_FOLDERS_DID_CHANGE);
@@ -377,7 +377,7 @@ ml_remove_folder_at_index (ddb_mediasource_source_t *_source, int index) {
             notify = 1;
         }
         _save_folders_config(source);
-        ml_watch_fs_start(source);
+        ml_source_update_fs_watch(source);
     });
     if (notify) {
         ml_notify_listeners (source, DDB_MEDIALIB_MEDIASOURCE_EVENT_FOLDERS_DID_CHANGE);
@@ -395,7 +395,7 @@ ml_append_folder (ddb_mediasource_source_t *_source, const char *folder) {
         }
         json_decref(value);
         _save_folders_config(source);
-        ml_watch_fs_start(source);
+        ml_source_update_fs_watch(source);
     });
     if (notify) {
         ml_notify_listeners (source, DDB_MEDIALIB_MEDIASOURCE_EVENT_FOLDERS_DID_CHANGE);

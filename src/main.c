@@ -108,6 +108,10 @@
 #define SYS_CONFIG_DIR ".config"
 #endif
 
+#ifdef __MINGW32__
+#include "../shared/windows/utils.h"
+#endif
+
 // some common global variables
 char sys_install_path[PATH_MAX]; // see deadbeef->get_prefix
 char confdir[PATH_MAX]; // $HOME/.config
@@ -571,9 +575,6 @@ int db_socket_init_inet () {
         trace_err ("Error with WSAStartup(), WinSock startup failed.\n");
         return -1;
     }
-    else {
-        trace ("WinSock init ok, library version %d.%d\n", HIBYTE(wsaData.wVersion), LOBYTE(wsaData.wVersion));
-    }
 #endif
 
     return 0;
@@ -712,7 +713,7 @@ read_entire_message (int sockfd, int *size) {
 
         ssize_t rd = recv(sockfd, buf + rdp, bufsize - rdp, 0);
         if (rd < 0) {
-            if (errno == EAGAIN) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 usleep (50000);
                 continue;
             }
@@ -871,6 +872,12 @@ player_mainloop (void) {
                 case DB_EV_PREV:
                     streamer_move_to_prevsong (1);
                     break;
+                case DB_EV_PLAY_NEXT_ALBUM:
+                    streamer_move_to_nextalbum (1);
+                    break;
+                case DB_EV_PLAY_PREV_ALBUM:
+                    streamer_move_to_prevalbum (1);
+                    break;
                 case DB_EV_PAUSE:
                     if (output->state () != DDB_PLAYBACK_STATE_PAUSED) {
                         output->pause ();
@@ -888,6 +895,9 @@ player_mainloop (void) {
                     break;
                 case DB_EV_PLAY_RANDOM:
                     streamer_move_to_randomsong (1);
+                    break;
+                case DB_EV_PLAY_RANDOM_ALBUM:
+                    streamer_move_to_randomalbum (1);
                     break;
                 case DB_EV_CONFIGCHANGED:
                     conf_save ();
@@ -1101,6 +1111,9 @@ mainloop_thread (void *ctx) {
 
 int
 main (int argc, char *argv[]) {
+#if __MINGW32__
+    windows_arg_fix(&argc, argv);
+#endif
     ddb_logger_init ();
     int portable = 0;
     int staticlink = 0;

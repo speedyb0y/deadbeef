@@ -49,6 +49,7 @@ enum {
 static void
 _restore_selected_expanded_state_for_iter (w_medialib_viewer_t *mlv, GtkTreeStore *store, GtkTreeIter *iter);
 
+// FIXME: this should not be necessary
 static int
 _item_comparator (const void *a, const void *b) {
     const ddb_medialib_item_t *item1 = *((ddb_medialib_item_t **)a);
@@ -361,6 +362,13 @@ _scriptableSelectSelectionDidChange(gtkScriptableSelectViewController_t *vc, scr
 }
 
 static void
+_scriptableSelectScriptableDidChange(gtkScriptableSelectViewController_t *view_controller, gtkScriptableChange_t change_type, void *context) {
+    w_medialib_viewer_t *mlv = context;
+    scriptableItem_t *presets = plugin->get_queries_scriptable(mlv->source);
+    scriptableItemSave(presets);
+}
+
+static void
 w_medialib_viewer_init (struct ddb_gtkui_widget_s *w) {
     // observe medialib source
     w_medialib_viewer_t *mlv = (w_medialib_viewer_t *)w;
@@ -376,7 +384,8 @@ w_medialib_viewer_init (struct ddb_gtkui_widget_s *w) {
 
     scriptableItem_t *presets = plugin->get_queries_scriptable(mlv->source);
 
-    mlv->scriptableSelectDelegate.selectionDidChange = _scriptableSelectSelectionDidChange;
+    mlv->scriptableSelectDelegate.selection_did_change = _scriptableSelectSelectionDidChange;
+    mlv->scriptableSelectDelegate.scriptable_did_change = _scriptableSelectScriptableDidChange;
     gtkScriptableSelectViewControllerSetScriptable(mlv->selectViewController, presets);
     gtkScriptableSelectViewControllerSetDelegate(mlv->selectViewController, &mlv->scriptableSelectDelegate, mlv);
     gtkScriptableSelectViewControllerSelectItem(mlv->selectViewController, scriptableItemChildren(presets));
@@ -748,25 +757,33 @@ w_medialib_viewer_create (void) {
         return (ddb_gtkui_widget_t *)w;
     }
 
-    GtkWidget *vbox = gtk_vbox_new (FALSE, 8);
+    GtkWidget *vbox = gtk_vbox_new (FALSE, 0);
     gtk_widget_show (vbox);
     gtk_container_add (GTK_CONTAINER (w->base.widget), vbox);
+
+    GtkWidget *headerbox = gtk_vbox_new(FALSE, 8);
+    gtk_widget_show (headerbox);
+    gtk_box_pack_start(GTK_BOX(vbox), headerbox, FALSE, FALSE, 8);
 
     w->selectViewController = gtkScriptableSelectViewControllerNew();
     GtkWidget *selectViewControllerWidget = gtkScriptableSelectViewControllerGetView(w->selectViewController);
 
-    GtkWidget *select_view_wrap_hbox = gtk_hbox_new (FALSE, 8);
-    gtk_widget_show (select_view_wrap_hbox);
-    gtk_box_pack_start (GTK_BOX (vbox), select_view_wrap_hbox, FALSE, TRUE, 0);
-    gtk_box_pack_start (GTK_BOX (select_view_wrap_hbox), selectViewControllerWidget, TRUE, TRUE, 20);
+    GtkWidget *buttons_padding_hbox = gtk_hbox_new (FALSE, 0);
+    gtk_widget_show (buttons_padding_hbox);
+    gtk_box_pack_start (GTK_BOX (headerbox), buttons_padding_hbox, FALSE, TRUE, 0);
+
+    GtkWidget *buttons_container_hbox = gtk_hbox_new (FALSE, 8);
+    gtk_widget_show (buttons_container_hbox);
+    gtk_box_pack_start (GTK_BOX (buttons_padding_hbox), buttons_container_hbox, TRUE, TRUE, 20);
+    gtk_box_pack_start (GTK_BOX (buttons_container_hbox), selectViewControllerWidget, TRUE, TRUE, 0);
 
     GtkWidget *configure_button = gtk_button_new_with_label (_("Configure"));
     gtk_widget_show (configure_button);
-    gtk_box_pack_start (GTK_BOX (select_view_wrap_hbox), configure_button, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (buttons_container_hbox), configure_button, FALSE, FALSE, 0);
 
-    GtkWidget *search_hbox = gtk_hbox_new (FALSE, 8);
+    GtkWidget *search_hbox = gtk_hbox_new (FALSE, 0);
     gtk_widget_show (search_hbox);
-    gtk_box_pack_start (GTK_BOX (vbox), search_hbox, FALSE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (headerbox), search_hbox, FALSE, TRUE, 0);
 
     w->search_entry = GTK_ENTRY (gtk_entry_new ());
 #if GTK_CHECK_VERSION (3,2,0)
