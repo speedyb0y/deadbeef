@@ -829,7 +829,7 @@ project "ddb_gui_GTK2"
     "shared/trkproperties_shared.c",
     "shared/analyzer/analyzer.c",
     "shared/scope/scope.c",
-    "shared/scriptable/scriptable.c",
+    "shared/scriptable/*.c",
     "plugins/libparser/parser.c",
     "src/utf8.c"
   }
@@ -862,7 +862,7 @@ project "ddb_gui_GTK3"
     "shared/trkproperties_shared.c",
     "shared/analyzer/analyzer.c",
     "shared/scope/scope.c",
-    "shared/scriptable/scriptable.c",
+    "shared/scriptable/*.c",
     "plugins/libparser/parser.c",
     "src/utf8.c"
   }
@@ -1207,6 +1207,28 @@ project "ddb_dsp_libretro"
   buildoptions {
     "-msse3"
   }
+end
+
+if option ("plugin-medialib") then
+project "medialib"
+  files {
+    "plugins/medialib/medialib.c",
+    "plugins/medialib/medialibcommon.c",
+    "plugins/medialib/medialibdb.c",
+    "plugins/medialib/medialibfilesystem_stub.c",
+    "plugins/medialib/medialibscanner.c",
+    "plugins/medialib/medialibsource.c",
+    "plugins/medialib/medialibstate.c",
+    "plugins/medialib/medialibtree.c",
+    "plugins/medialib/scriptable_tfquery.c",
+    "shared/scriptable/*.c"
+  }
+  includedirs {
+    "shared"
+  }
+  pkgconfig ("jansson")
+  buildoptions {"-fblocks"}
+  links {"dispatch", "BlocksRuntime"}
 end
 
 project "translations"

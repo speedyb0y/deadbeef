@@ -73,16 +73,17 @@ _FSEventStreamCallback(ConstFSEventStreamRef streamRef, void * __nullable client
     FSEventStreamRef eventStream = FSEventStreamCreate(NULL, _FSEventStreamCallback, &context, arrayRef, kFSEventStreamEventIdSinceNow, 1.0, kFSEventStreamCreateFlagWatchRoot);
     CFRelease(arrayRef);
 
-    FSEventStreamScheduleWithRunLoop(eventStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+    FSEventStreamSetDispatchQueue(eventStream, dispatch_get_main_queue());
     FSEventStreamStart(eventStream);
+    _eventStream = eventStream;
 
     return self;
 }
 
 - (void)stop {
     [_debounceTimer invalidate];
+    FSEventStreamInvalidate(_eventStream);
     FSEventStreamStop(_eventStream);
-    FSEventStreamUnscheduleFromRunLoop(_eventStream, CFRunLoopGetMain(), kCFRunLoopCommonModes);
     FSEventStreamRelease(_eventStream);
 }
 

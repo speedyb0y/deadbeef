@@ -21,22 +21,37 @@
     3. This notice may not be removed or altered from any source distribution.
 */
 
-#ifndef scriptable_tfquery_h
-#define scriptable_tfquery_h
+#ifndef scriptable_model_h
+#define scriptable_model_h
 
+#include "scriptable.h"
 #include <deadbeef/deadbeef.h>
-#include "scriptable/scriptable.h"
 
-scriptableItem_t *
-scriptableTFQueryRootCreate (void);
+// Observable model interface for scriptables
 
-int
-scriptableTFQueryLoadPresets (scriptableItem_t *root);
+struct scriptableModel_t;
+typedef struct scriptableModel_t scriptableModel_t;
+
+typedef struct scriptableModelAPI_t {
+    char *(*get_active_name) (scriptableModel_t *model);
+    void (*set_active_name) (scriptableModel_t *model, const char *active_name);
+    int64_t (*add_listener) (
+        scriptableModel_t *model,
+        void (*listener) (scriptableModel_t *model, void *user_data),
+        void *user_data);
+    void (*remove_listener) (scriptableModel_t *model, int64_t listener);
+} scriptableModelAPI_t;
+
+scriptableModel_t *
+scriptableModelAlloc (void);
+
+scriptableModel_t *
+scriptableModelInit (scriptableModel_t *model, DB_functions_t *deadbeef, const char *config_name_active);
 
 void
-ml_scriptable_init (DB_functions_t *_deadbeef, DB_mediasource_t *_plugin, scriptableItem_t *root);
+scriptableModelFree (scriptableModel_t *model);
 
-void
-ml_scriptable_deinit (void);
+scriptableModelAPI_t *
+scriptableModelGetAPI (scriptableModel_t *model);
 
-#endif /* scriptable_tfquery_h */
+#endif /* scriptable_model_h */

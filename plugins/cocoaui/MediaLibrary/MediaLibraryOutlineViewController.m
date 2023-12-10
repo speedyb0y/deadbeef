@@ -21,7 +21,10 @@
 
 extern DB_functions_t *deadbeef;
 
+static void *kPresetCtx = &kPresetCtx;
+
 @interface MediaLibraryOutlineViewController() <NSOutlineViewDataSource,MediaLibraryOutlineViewDelegate,TrackContextMenuDelegate,TrackPropertiesWindowControllerDelegate> {
+    int64_t _modelListenerId;
 }
 
 @property (nonatomic) MediaLibraryItem *medialibRootItem;
@@ -30,11 +33,11 @@ extern DB_functions_t *deadbeef;
 
 @property (nonatomic) NSArray *topLevelItems;
 
-@property (nonatomic) int listenerId;
+@property (nonatomic) int artworkListenerId;
+@property (nonatomic) int medialibListenerId;
 
 @property (nonatomic) NSOutlineView *outlineView;
 @property (nonatomic) NSSearchField *searchField;
-@property (nonatomic) NSPopUpButton *selectorPopup;
 
 @property (atomic) DB_mediasource_t *medialibPlugin;
 @property (atomic,readonly) ddb_mediasource_source_t *medialibSource;
@@ -49,7 +52,7 @@ extern DB_functions_t *deadbeef;
 
 @property (nonatomic) NSMutableDictionary<NSString *,NSImage *> *albumArtCache;
 
-@property (nonatomic) NSString *currentPreset;
+@property (nonatomic) NSImage *folderImage;
 
 @end
 
@@ -68,6 +71,16 @@ extern DB_functions_t *deadbeef;
     return [self initWithOutlineView:[NSOutlineView new] searchField:[NSSearchField new]];
 }
 
+static void
+_model_listener (struct scriptableModel_t *model, void *user_data) {
+    MediaLibraryOutlineViewController *self = (__bridge MediaLibraryOutlineViewController *)user_data;
+    [self modelListener];
+}
+
+- (void)modelListener {
+    [self initializeTreeView];
+}
+
 - (instancetype)initWithOutlineView:(NSOutlineView *)outlineView searchField:(NSSearchField *)searchField {
     self = [super init];
     if (!self) {
@@ -76,7 +89,7 @@ extern DB_functions_t *deadbeef;
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(applicationWillQuit:) name:@"ApplicationWillQuit" object:nil];
 
-    self.currentPreset = self.mediaLibraryManager.preset;
+    [self.mediaLibraryManager addObserver:self forKeyPath:@"preset" options:0 context:kPresetCtx];
 
     self.outlineView = outlineView;
     self.outlineView.dataSource = self;
@@ -89,13 +102,20 @@ extern DB_functions_t *deadbeef;
 
     self.medialibPlugin = (DB_mediasource_t *)deadbeef->plug_get_for_id ("medialib");
     self.artworkPlugin = (ddb_artwork_plugin_t *)deadbeef->plug_get_for_id ("artwork2");
-    self.listenerId = self.medialibPlugin->add_listener (self.medialibSource, _medialib_listener, (__bridge void *)self);
+
+    if (self->_artworkPlugin != NULL) {
+        self.artworkPlugin->add_listener(_artwork_listener, (__bridge void *)self);
+    }
+    self.medialibListenerId = self.medialibPlugin->add_listener (self.medialibSource, _medialib_listener, (__bridge void *)self);
 
     self.trackContextMenu = [[TrackContextMenu alloc] initWithView:self.outlineView];
     self.outlineView.menu = self.trackContextMenu;
     self.outlineView.menu.delegate = self;
 
     [self initializeTreeView];
+
+    scriptableModel_t *model = self.mediaLibraryManager.model;
+    _modelListenerId = scriptableModelGetAPI(model)->add_listener (model, _model_listener, (__bridge void *)self);
 
     [self.outlineView expandItem:self.medialibRootItem];
 
@@ -108,16 +128,35 @@ extern DB_functions_t *deadbeef;
 
     self.selectedItems = [NSMutableArray new];
 
+    self.folderImage = [NSWorkspace.sharedWorkspace iconForFileType:NSFileTypeForHFSTypeCode(kGenericFolderIcon)];
+
     return self;
 }
 
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+{
+    if (context == kPresetCtx) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // NOTE: don't add a check for whether user changed to another preset.
+            // This would break a refresh if the current preset changes settings.
+            [self filterChanged];
+        });
+    } else {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    }
+}
+
 - (void)disconnect {
+    scriptableModel_t *model = self.mediaLibraryManager.model;
+    scriptableModelGetAPI(model)->remove_listener(model, _modelListenerId);
+    _modelListenerId = 0;
+
     if (self.medialibPlugin == NULL) {
         return;
     }
-    if (self.listenerId != -1) {
-        self.medialibPlugin->remove_listener (self.medialibSource, self.listenerId);
-        self.listenerId = -1;
+    if (self.medialibListenerId != -1) {
+        self.medialibPlugin->remove_listener (self.medialibSource, self.medialibListenerId);
+        self.medialibListenerId = -1;
     }
     self.medialibPlugin = NULL;
     self.artworkPlugin = NULL;
@@ -129,10 +168,23 @@ extern DB_functions_t *deadbeef;
 }
 
 - (void)dealloc {
+    if (self.artworkPlugin != NULL) {
+        self.artworkPlugin->remove_listener(_artwork_listener, (__bridge void *)self);
+    }
+    [self.mediaLibraryManager removeObserver:self forKeyPath:@"preset" context:kPresetCtx];
     [self disconnect];
 }
 
-static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
+static void
+_artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p1, int64_t p2) {
+    MediaLibraryOutlineViewController *ctl = (__bridge MediaLibraryOutlineViewController *)user_data;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [ctl artworkEvent:event];
+    });
+}
+
+static void
+_medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
     MediaLibraryOutlineViewController *ctl = (__bridge MediaLibraryOutlineViewController *)user_data;
     dispatch_async(dispatch_get_main_queue(), ^{
         [ctl medialibEvent:event];
@@ -147,7 +199,8 @@ static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_d
 
     scriptableItem_t *tfQueryRoot =  self.medialibPlugin->get_queries_scriptable(self.medialibSource);
 
-    NSString *presetName = self.mediaLibraryManager.preset;
+    scriptableModel_t *model = self.mediaLibraryManager.model;
+    NSString *presetName = @(scriptableModelGetAPI(model)->get_active_name(model));
     scriptableItem_t *preset = NULL;
     if (presetName != nil) {
         preset = scriptableItemSubItemForName(tfQueryRoot, presetName.UTF8String);
@@ -251,7 +304,7 @@ static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_d
     case DDB_MEDIASOURCE_STATE_SAVING:
         view.textField.stringValue = @"Saving...";
         break;
-   }
+    }
 }
 
 - (void)updateMedialibStatus {
@@ -265,6 +318,22 @@ static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_d
     [self updateMedialibStatusForView:view];
 }
 
+- (void)resetArtworkForItem:(MediaLibraryItem *)item {
+    item.coverImage = nil;
+    item.coverObtained = NO;
+    for (MediaLibraryItem *child in item.children) {
+        [self resetArtworkForItem:child];
+    }
+}
+
+- (void)artworkEvent:(ddb_artwork_listener_event_t)event {
+    if (event == DDB_ARTWORK_SETTINGS_DID_CHANGE) {
+        [self resetArtworkForItem:self.medialibRootItem];
+        [self.albumArtCache removeAllObjects];
+        [self.outlineView reloadData];
+    }
+}
+
 - (void)medialibEvent:(ddb_mediasource_event_type_t)event {
     if (self.medialibPlugin == NULL) {
         return;
@@ -276,8 +345,6 @@ static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_d
     case DDB_MEDIASOURCE_EVENT_STATE_DID_CHANGE:
     case DDB_MEDIASOURCE_EVENT_ENABLED_DID_CHANGE:
         [self updateMedialibStatus];
-        break;
-    case DDB_MEDIASOURCE_EVENT_SELECTORS_DID_CHANGE:
         break;
     case DDB_MEDIASOURCE_EVENT_OUT_OF_SYNC:
         self.medialibPlugin->refresh(self.medialibSource);
@@ -370,16 +437,6 @@ static void _medialib_listener (ddb_mediasource_event_type_t event, void *user_d
 }
 
 - (int)widgetMessage:(int)_id ctx:(uint64_t)ctx p1:(uint32_t)p1 p2:(uint32_t)p2 {
-
-    if (_id == DB_EV_CONFIGCHANGED) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NSString *preset = self.mediaLibraryManager.preset;
-            if (![preset isEqualToString:self.currentPreset]) {
-                self.currentPreset = preset;
-                [self filterChanged];
-            }
-        });
-    }
     return 0;
 }
 
@@ -465,10 +522,16 @@ static void cover_get_callback (int error, ddb_cover_query_t *query, ddb_cover_i
 }
 
 - (NSString *)albumArtCacheKeyForTrack:(ddb_playItem_t *)track {
-    const char *artist = deadbeef->pl_find_meta (track, "artist") ?: "Unknown Artist";
-    const char *album = deadbeef->pl_find_meta (track, "album") ?: "Unknown Album";
+    const char *artist = deadbeef->pl_find_meta (track, "artist");
+    const char *album = deadbeef->pl_find_meta (track, "album");
 
-    return [NSString stringWithFormat:@"artist:%s;album:%s", artist, album];
+    if (artist != NULL && album != NULL) {
+        return [NSString stringWithFormat:@"artist:%s;album:%s", artist, album];
+    }
+    else {
+        const char *path = deadbeef->pl_find_meta(track, ":URI");
+        return [NSString stringWithFormat:@"file:%s", path];
+    }
 }
 
 // NOTE: this is running on background thread
@@ -521,6 +584,7 @@ static void cover_get_callback (int error, ddb_cover_query_t *query, ddb_cover_i
 - (void)updateCoverForItem:(MediaLibraryItem *)item track:(ddb_playItem_t *)track {
     void (^completionBlock)(ddb_cover_query_t *query, ddb_cover_info_t *cover, int error) = ^(ddb_cover_query_t *query, ddb_cover_info_t *cover, int error) {
         NSImage *image = [self getImage:query coverInfo:cover error:error];
+
         dispatch_async(dispatch_get_main_queue(), ^{
             if (image != nil) {
                 NSString *key = [self albumArtCacheKeyForTrack:query->track];
@@ -532,10 +596,17 @@ static void cover_get_callback (int error, ddb_cover_query_t *query, ddb_cover_i
             if (row == -1) {
                 return;
             }
-            item.coverImage = image;
+
+            if (image == nil && item.children.count != 0) {
+                item.coverImage = self.folderImage;
+            }
+            else {
+                item.coverImage = image;
+            }
+
             NSTableRowView *rowView = [self.outlineView rowViewAtRow:row makeIfNecessary:NO];
             NSTableCellView *cellView = [rowView viewAtColumn:0];
-            cellView.imageView.image = image;
+            cellView.imageView.image = item.coverImage;
         });
     };
     ddb_cover_query_t *query = calloc (1, sizeof (ddb_cover_query_t));
@@ -568,6 +639,10 @@ static void cover_get_callback (int error, ddb_cover_query_t *query, ddb_cover_i
             view.textField.stringValue = mlItem.stringValue;
             view.imageView.image = nil;
 
+            if (mlItem.coverImage == nil && mlItem.children.count != 0) {
+                view.imageView.image = self.folderImage;
+            }
+
             if (it) {
                 if (mlItem.coverImage) {
                     view.imageView.image = mlItem.coverImage;
@@ -583,10 +658,7 @@ static void cover_get_callback (int error, ddb_cover_query_t *query, ddb_cover_i
                         if (!mlItem.coverObtained) {
                             NSInteger row = [self.outlineView rowForItem:mlItem];
                             if (row >= 0) {
-                                NSTableCellView *cellView = [[self.outlineView rowViewAtRow:row makeIfNecessary:NO] viewAtColumn:0];
-                                if (cellView) {
-                                    [self updateCoverForItem:mlItem track:it];
-                                }
+                                [self updateCoverForItem:mlItem track:it];
                             }
                             mlItem.coverObtained = YES;
                         }
