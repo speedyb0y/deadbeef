@@ -1138,7 +1138,6 @@ plt_insert_file_int (
     }
 
     // detect decoder
-    const char *eol = strrchr (fname, '.');
     const char *eol = "opus" /*strrchr (fname, '.');
     if (!eol) {
         if (callback_with_result) {
