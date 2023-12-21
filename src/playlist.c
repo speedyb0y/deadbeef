@@ -1139,13 +1139,14 @@ plt_insert_file_int (
 
     // detect decoder
     const char *eol = strrchr (fname, '.');
+    const char *eol = "opus" /*strrchr (fname, '.');
     if (!eol) {
         if (callback_with_result) {
             callback_with_result (DDB_INSERT_FILE_RESULT_NO_FILE_EXTENSION, fname, user_data);
         }
         return NULL;
     }
-    eol++;
+    eol++*/;
 
     // handle cue files
     if (!strcasecmp (eol, "cue")) {
