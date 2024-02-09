@@ -32,6 +32,7 @@
 #import "TrackContextMenu.h"
 #import "TrackPropertiesManager.h"
 #import "tftintutil.h"
+#import "DdbPlayItemPasteboardSerializer.h"
 
 #include <deadbeef/deadbeef.h>
 #include "utf8.h"
@@ -1336,6 +1337,8 @@ artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p
     deadbeef->plt_sort_v2 (plt, PL_MAIN, c->type, (c->sortFormat && c->sortFormat[0]) ? c->sortFormat : c->format, self.columns[column].sort_order);
     deadbeef->plt_unref (plt);
 
+    deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, 0, DDB_PLAYLIST_CHANGE_CONTENT, 0);
+
     PlaylistView *lv = (PlaylistView *)self.view;
     lv.headerView.needsDisplay = YES;
 }
@@ -1364,18 +1367,18 @@ artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p
     deadbeef->pl_save_all();
 }
 
--(void)externalDropItems:(NSArray *)paths after:(DdbListviewRow_t)_after {
-    ddb_playlist_t *plt = deadbeef->plt_get_curr ();
+-(void)externalDropItems:(NSArray *)paths after:(DdbListviewRow_t)_after  completionBlock:(nonnull void (^) (void))completionBlock {
+    ddb_playlist_t *plt = deadbeef->plt_alloc("drag-drop-playlist");
+    ddb_playlist_t *plt_curr = deadbeef->plt_get_curr ();
     if (!deadbeef->plt_add_files_begin (plt, 0)) {
-        dispatch_queue_t aQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
-        dispatch_async(aQueue, ^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             DB_playItem_t *first = NULL;
-            DB_playItem_t *after = (DB_playItem_t *)_after;
+            DB_playItem_t *after = NULL;
+            int abort = 0;
             for(NSUInteger i = 0; i < paths.count; i++ )
             {
                 NSString* path = paths[i];
                 if (path) {
-                    int abort = 0;
                     const char *fname = path.UTF8String;
                     DB_playItem_t *inserted = deadbeef->plt_insert_dir2 (0, plt, after, fname, &abort, NULL, NULL);
                     if (!inserted && !abort) {
@@ -1394,8 +1397,6 @@ artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p
                         }
                         after = inserted;
                         deadbeef->pl_item_ref (after);
-
-                        // TODO: set cursor to the first dropped item
                     }
 
                     if (abort) {
@@ -1407,9 +1408,24 @@ artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p
                 deadbeef->pl_item_unref (after);
             }
             deadbeef->plt_add_files_end (plt, 0);
-            deadbeef->plt_unref (plt);
-            deadbeef->pl_save_current();
-            deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, 0, DDB_PLAYLIST_CHANGE_CONTENT, 0);
+            if (abort) {
+                deadbeef->plt_unref (plt);
+                deadbeef->plt_unref (plt_curr);
+            }
+            else {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    // move items to UI playlist
+                    deadbeef->plt_move_all_items(plt_curr, plt, (ddb_playItem_t *)_after);
+                    // TODO: set cursor to the first dropped item
+
+                    deadbeef->plt_unref (plt);
+                    deadbeef->plt_unref (plt_curr);
+                    deadbeef->pl_save_current();
+                    deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, 0, DDB_PLAYLIST_CHANGE_CONTENT, 0);
+
+                    completionBlock();
+                });
+            }
         });
     }
     else {
@@ -1527,6 +1543,87 @@ artwork_listener (ddb_artwork_listener_event_t event, void *user_data, int64_t p
     }
 
     return self.trackContextMenu;
+}
+
+#pragma mark - Copy & paste
+
+- (void)copyAndDeleteSelected:(BOOL)deleteSelected {
+    ddb_playlist_t *plt = deadbeef->plt_get_curr ();
+
+    ddb_playItem_t **items = NULL;
+    ssize_t count = deadbeef->plt_get_selected_items (plt, &items);
+    if (count == 0) {
+        deadbeef->plt_unref (plt);
+        return;
+    }
+
+    DdbPlayItemPasteboardSerializer *holder = [[DdbPlayItemPasteboardSerializer alloc] initWithItems:items count:count];
+
+    for (ssize_t index = 0; index < count; index++) {
+        deadbeef->pl_item_unref (items[index]);
+    }
+    free (items);
+
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    [pasteboard writeObjects:@[holder]];
+
+    if (deleteSelected) {
+        deadbeef->plt_delete_selected (plt);
+    }
+
+    deadbeef->plt_unref (plt);
+
+    if (deleteSelected) {
+        deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, 0, DDB_PLAYLIST_CHANGE_CONTENT, 0);
+    }
+}
+
+- (void)cut:(id)sender {
+    [self copyAndDeleteSelected:YES];
+}
+
+- (void)copy:(id)sender {
+    [self copyAndDeleteSelected:NO];
+}
+
+- (void)paste:(id)sender {
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSArray *copiedItems = [pasteboard readObjectsForClasses:@[DdbPlayItemPasteboardSerializer.class] options:@{}];
+    if (copiedItems != nil) {
+        DdbPlayItemPasteboardSerializer *holder = copiedItems.firstObject;
+        ddb_playlist_t *plt = deadbeef->plt_get_curr ();
+        int cursor = deadbeef->plt_get_cursor (plt, PL_MAIN);
+        if (cursor == -1) {
+            cursor = 0;
+        }
+        ddb_playItem_t *before = deadbeef->plt_get_item_for_idx (plt, cursor, PL_MAIN);
+
+        ssize_t count = 0;
+        if (holder.plt != NULL) {
+            ddb_playItem_t **items;
+            count = deadbeef->plt_get_items(holder.plt, &items);
+
+            [self dropPlayItems:(DdbListviewRow_t *)items before:(DdbListviewRow_t)before count:(int)count];
+
+            for (ssize_t i = 0; i < count; i++) {
+                deadbeef->pl_item_unref(items[i]);
+            }
+            free (items);
+        }
+
+        if (before != NULL) {
+            deadbeef->pl_item_unref (before);
+        }
+
+        deadbeef->plt_deselect_all (plt);
+        deadbeef->plt_set_cursor (plt, PL_MAIN, (int)(cursor + count));
+        deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, (uintptr_t)self.view, DDB_PLAYLIST_CHANGE_SELECTION, 0);
+
+        // TODO: scroll to cursor
+
+        deadbeef->plt_unref (plt);
+    }
 }
 
 #pragma mark - TrackContextMenuDelegate

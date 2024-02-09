@@ -15,9 +15,10 @@
 #import "MediaLibraryOutlineView.h"
 #import "MediaLibraryItem.h"
 #import "MediaLibraryOutlineViewController.h"
-#import "MedialibItemDragDropHolder.h"
+#import "DdbPlayItemPasteboardSerializer.h"
 #import "TrackContextMenu.h"
 #import "TrackPropertiesWindowController.h"
+#import "UndoIntegration.h"
 
 extern DB_functions_t *deadbeef;
 
@@ -94,7 +95,7 @@ _model_listener (struct scriptableModel_t *model, void *user_data) {
     self.outlineView = outlineView;
     self.outlineView.dataSource = self;
     self.outlineView.delegate = self;
-    [self.outlineView registerForDraggedTypes:@[ddbMedialibItemUTIType]];
+    [self.outlineView registerForDraggedTypes:@[ddbPlaylistDataUTIType]];
 
     self.searchField = searchField;
     self.searchField.target = self;
@@ -365,14 +366,16 @@ _medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
     return curr_plt;
 }
 
-- (int)addSelectionToPlaylist:(ddb_playlist_t *)curr_plt {
+- (int)addSelectionToPlaylist:(ddb_playlist_t *)plt {
     MediaLibraryItem *item = [self selectedItem];
     NSMutableArray<MediaLibraryItem *> *items = [NSMutableArray new];
     [self arrayOfPlayableItemsForItem:item outputArray:items];
 
     int count = 0;
 
-    ddb_playItem_t *prev = deadbeef->plt_get_last(curr_plt, PL_MAIN);
+    ddb_undo->group_begin();
+
+    ddb_playItem_t *prev = deadbeef->plt_get_last(plt, PL_MAIN);
     for (item in items) {
         ddb_playItem_t *playItem = item.playItem;
         if (playItem == NULL) {
@@ -380,19 +383,22 @@ _medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
         }
         ddb_playItem_t *it = deadbeef->pl_item_alloc();
         deadbeef->pl_item_copy (it, playItem);
-        deadbeef->plt_insert_item (curr_plt, prev, it);
+        deadbeef->plt_insert_item (plt, prev, it);
         if (prev != NULL) {
             deadbeef->pl_item_unref (prev);
         }
         prev = it;
         count += 1;
     }
+
+    ddb_undo->group_end ();
+
     if (prev != NULL) {
         deadbeef->pl_item_unref (prev);
     }
     prev = NULL;
 
-    deadbeef->pl_save_all();
+    deadbeef->plt_save_config (plt);
 
     return count;
 }
@@ -415,10 +421,12 @@ _medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
 
     deadbeef->plt_unref (curr_plt);
 
+    ddb_undo->set_action_name ("Add Files");
+
+    deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, DDB_PLAYLIST_CHANGE_CONTENT, 0, 0);
     if (count > 0) {
         deadbeef->sendmessage(DB_EV_PLAY_NUM, 0, 0, 0);
     }
-    deadbeef->sendmessage (DB_EV_PLAYLISTCHANGED, DDB_PLAYLIST_CHANGE_CONTENT, 0, 0);
 }
 
 - (void)filterChanged {
@@ -498,7 +506,7 @@ _medialib_listener (ddb_mediasource_event_type_t event, void *user_data) {
         playItems[count++] = playableItem.playItem;
     }
 
-    return [[MedialibItemDragDropHolder alloc] initWithItems:playItems count:count];
+    return [[DdbPlayItemPasteboardSerializer alloc] initWithItems:playItems count:count];
 }
 
 

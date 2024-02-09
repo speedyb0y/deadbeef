@@ -92,6 +92,7 @@ typedef struct playlist_s {
     unsigned loading_cue : 1;
     unsigned ignore_archives : 1;
     unsigned follow_symlinks : 1;
+    unsigned undo_enabled: 1;
 } playlist_t;
 
 // global playlist control functions
@@ -405,6 +406,9 @@ void
 plt_move_items (playlist_t *to, int iter, playlist_t *from, playItem_t *drop_before, uint32_t *indexes, int count);
 
 void
+plt_move_all_items (playlist_t *to, playlist_t *from, playItem_t *insert_after);
+
+void
 plt_copy_items (playlist_t *to, int iter, playlist_t *from, playItem_t *before, uint32_t *indices, int cnt);
 
 void
@@ -565,6 +569,18 @@ pl_set_shufflerating (playItem_t *it, int rating);
 
 int
 pl_items_from_same_album(playItem_t* a, playItem_t* b);
+
+size_t
+plt_get_items (playlist_t *plt, playItem_t ***out_items);
+
+size_t
+plt_get_selected_items(playlist_t *plt, playItem_t ***out_items);
+
+int
+plt_load_from_buffer (playlist_t *plt, const uint8_t *buffer, size_t size);
+
+ssize_t
+plt_save_to_buffer(playlist_t *plt, uint8_t **out_buffer);
 
 #ifdef __cplusplus
 }

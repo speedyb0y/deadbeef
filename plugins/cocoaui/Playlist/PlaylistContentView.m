@@ -11,9 +11,10 @@
 #import "PlaylistGroup.h"
 #import "PlaylistView.h"
 #import "DdbShared.h"
-#import "MedialibItemDragDropHolder.h"
+#import "DdbPlayItemPasteboardSerializer.h"
 #import "PlaylistLocalDragDropHolder.h"
 #include <deadbeef/deadbeef.h>
+#import "UndoIntegration.h"
 
 extern DB_functions_t *deadbeef;
 
@@ -61,7 +62,7 @@ static int grouptitleheight = 22;
 
     self.groups_build_idx = -1;
 
-    [self registerForDraggedTypes:@[ddbPlaylistItemsUTIType, ddbMedialibItemUTIType, NSFilenamesPboardType]];
+    [self registerForDraggedTypes:@[ddbPlaylistItemsUTIType, ddbPlaylistDataUTIType, NSFilenamesPboardType]];
 
     _pinnedGroupTitleView = [PinnedGroupTitleView new];
     _pinnedGroupTitleView.hidden = YES;
@@ -162,6 +163,9 @@ static int grouptitleheight = 22;
         row = [self.dataModel rowForIndex:sel];
     }
 
+
+    ddb_undo->set_action_name ("Drag & drop");
+
     if ([pboard.types containsObject:ddbPlaylistItemsUTIType]) {
         NSArray *classes = @[[PlaylistLocalDragDropHolder class]];
         NSDictionary *options = @{};
@@ -182,38 +186,41 @@ static int grouptitleheight = 22;
             [self.delegate dropItems:(int)from_playlist before:row indices:indices count:(int)length copy:op==NSDragOperationCopy];
             free(indices);
         }
-    }
-    if ([pboard.types containsObject:ddbMedialibItemUTIType]) {
-        NSArray *classes = @[[MedialibItemDragDropHolder class]];
+   }
+    if ([pboard.types containsObject:ddbPlaylistDataUTIType]) {
+        NSArray *classes = @[[DdbPlayItemPasteboardSerializer class]];
         NSDictionary *options = @{};
-        NSArray<MedialibItemDragDropHolder *> *draggedItems = [pboard readObjectsForClasses:classes options:options];
+        NSArray<DdbPlayItemPasteboardSerializer *> *draggedItems = [pboard readObjectsForClasses:classes options:options];
 
-        NSInteger count = 0;
-        for (MedialibItemDragDropHolder *holder in draggedItems) {
-            count += holder.count;
-        }
-        DdbListviewRow_t *items = calloc (count, sizeof (DdbListviewRow_t));
-        size_t itemCount = 0;
-        for (MedialibItemDragDropHolder *holder in draggedItems) {
-            for (NSInteger i = 0; i < holder.count; i++) {
-                ddb_playItem_t *item = holder.items[i];
-                items[itemCount++] = (DdbListviewRow_t)item;
+        for (DdbPlayItemPasteboardSerializer *holder in draggedItems) {
+            if (holder.plt == NULL) {
+                continue;
             }
+
+            ddb_playItem_t **items;
+            ssize_t count = deadbeef->plt_get_items(holder.plt, &items);
+
+            [self.delegate dropPlayItems:(DdbListviewRow_t *)items before:row count:(int)count];
+
+            for (ssize_t i = 0; i < count; i++) {
+                deadbeef->pl_item_unref(items[i]);
+            }
+            free (items);
         }
-        [self.delegate dropPlayItems:items before:row count:(int)itemCount];
-        free (items);
     }
     else if ([pboard.types containsObject:NSFilenamesPboardType]) {
 
         NSArray *paths = [pboard propertyListForType:NSFilenamesPboardType];
         if (row != (self.dataModel).invalidRow) {
             // add before selected row
-            [self.delegate externalDropItems:paths after: [self.dataModel rowForIndex:sel-1] ];
+            [self.delegate externalDropItems:paths after: [self.dataModel rowForIndex:sel-1] completionBlock:^{
+            }];
         }
         else {
             // no selected row, add to end
             DdbListviewRow_t lastRow = [self.dataModel rowForIndex:((self.dataModel).rowCount-1)];
-            [self.delegate externalDropItems:paths after:lastRow];
+            [self.delegate externalDropItems:paths after:lastRow completionBlock:^{
+            }];
         }
     }
 
